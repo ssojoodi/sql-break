@@ -17,6 +17,14 @@ mysqldump -u dbusr -p dbname > dump.sql
 ./sql-break dump.sql
 ```
 
+Now on the target DB:
+
+```sh
+mysql -u dbuser -p dbname < dump.sql_1
+mysql -u dbuser -p dbname < dump.sql_2
+...
+```
+
 ## Limitations
 
 SQL Break is designed to work with MySQL dump files and may not function correctly with other types of SQL files. Additionally, it relies on the specific phrase "Table structure for table" to identify points for splitting the file. If this phrase is not present in the dump file, SQL Break will most likely break!
