@@ -49,32 +49,33 @@ int main(int argc, char *argv[])
     }
 
     char buffer[BUFFER_LENGTH];
-    size_t line_number = 1;
-    size_t buffer_size = 0;
-    size_t split_file_start_index = 0;
+    size_t bytes_read;
     int split_file_number = 0;
     FILE *split_file = NULL;
+    char search_buffer[SEARCH_STRING_LENGTH * 2] = {0}; // Buffer to hold potential matches across reads
 
-    while ((buffer_size = fread(buffer, 1, sizeof(buffer), file)) > 0)
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0)
     {
-        for (size_t i = 0; i < buffer_size; i++)
+        // Prepend any leftover from the previous read
+        memmove(search_buffer + SEARCH_STRING_LENGTH, buffer, SEARCH_STRING_LENGTH);
+
+        for (size_t i = 0; i < bytes_read; i++)
         {
-            if (buffer[i] == '\n')
-            {
-                line_number++;
-            }
-            if (i >= SEARCH_STRING_LENGTH && memcmp(buffer + i - SEARCH_STRING_LENGTH, SEARCH_STRING, SEARCH_STRING_LENGTH) == 0)
+            // Shift the search buffer
+            memmove(search_buffer, search_buffer + 1, SEARCH_STRING_LENGTH * 2 - 1);
+            search_buffer[SEARCH_STRING_LENGTH * 2 - 1] = buffer[i];
+
+            if (memcmp(search_buffer + SEARCH_STRING_LENGTH, SEARCH_STRING, SEARCH_STRING_LENGTH) == 0)
             {
                 if (split_file != NULL)
                 {
-                    fwrite(buffer + split_file_start_index, 1, i - split_file_start_index, split_file);
+                    fwrite(buffer, 1, i, split_file);
                     finish_sql_file(split_file);
                 }
 
                 char split_file_name[255];
                 snprintf(split_file_name, sizeof(split_file_name), "%s_%02d.sql", argv[1], split_file_number++);
 
-                // printf("Creating split file: %s for line number starting at %zu\n", split_file_name, line_number);
                 split_file = start_new_sql_file(split_file_name, split_file_number);
                 if (split_file == NULL)
                 {
@@ -83,16 +84,14 @@ int main(int argc, char *argv[])
                     return EXIT_FAILURE;
                 }
 
-                // Start the new file from the marker statement (SEARCH_STRING)
-                split_file_start_index = i - SEARCH_STRING_LENGTH;
+                // Write the SEARCH_STRING to the new file
+                fwrite(SEARCH_STRING, 1, SEARCH_STRING_LENGTH, split_file);
             }
         }
+
         if (split_file != NULL)
         {
-            fwrite(buffer + split_file_start_index, 1, buffer_size - split_file_start_index, split_file);
-
-            // Reset start index for the next buffer read
-            split_file_start_index = 0;
+            fwrite(buffer, 1, bytes_read, split_file);
         }
     }
 
