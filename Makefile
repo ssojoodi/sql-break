@@ -1,7 +1,11 @@
 all: breaksql
 
 breaksql:
-	gcc -o build/breaksql breaksql.c
+	mkdir -p build
+	gcc -Wall -Wextra -o build/breaksql breaksql.c
+
+test: breaksql
+	bash test.sh
 
 clean:
 	rm -f build/breaksql
