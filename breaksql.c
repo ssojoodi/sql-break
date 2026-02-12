@@ -2,33 +2,43 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BUFFER_LENGTH (100)
+#define LINE_BUFFER_SIZE (64 * 1024)
 #define SEARCH_STRING "-- Table structure for table"
-#define SEARCH_STRING_LENGTH (strlen(SEARCH_STRING))
+#define SEARCH_STRING_LENGTH (sizeof(SEARCH_STRING) - 1)
 
-// Disable and Re-instate the internal Constraint enforcement of SQL.
-#define SQL_FILE_START "/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;\n/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;\n\n"
+/* Disable and re-enable internal SQL constraint enforcement. */
+#define SQL_FILE_START \
+    "/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;\n" \
+    "/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;\n\n"
 
-#define SQL_FILE_END "\n\n/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;\n/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;\n"
+#define SQL_FILE_END \
+    "\n\n/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;\n" \
+    "/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;\n"
 
-/** Open a new SQL file and write the SQL_FILE_START to the file. */
-FILE *start_new_sql_file(char *filename, int number)
+/** Open a new SQL file and write the SQL_FILE_START header. */
+FILE *start_new_sql_file(const char *base_filename, int number)
 {
-    FILE *split_file = fopen(filename, "wb");
-    if (split_file == NULL)
+    char split_file_name[512];
+    snprintf(split_file_name, sizeof(split_file_name), "%s_%03d.sql", base_filename, number);
+
+    FILE *f = fopen(split_file_name, "w");
+    if (f == NULL)
     {
         perror("Error creating split file");
         return NULL;
     }
-    fprintf(split_file, "%s", SQL_FILE_START);
-    return split_file;
+    fprintf(f, "%s", SQL_FILE_START);
+    return f;
 }
 
-/** Close the SQL file and write the SQL_FILE_END to the file. */
-void finish_sql_file(FILE *file)
+/** Write the SQL_FILE_END footer and close the file. */
+void finish_sql_file(FILE *f)
 {
-    fprintf(file, "%s", SQL_FILE_END);
-    fclose(file);
+    if (f != NULL)
+    {
+        fprintf(f, "%s", SQL_FILE_END);
+        fclose(f);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -36,69 +46,74 @@ int main(int argc, char *argv[])
     if (argc < 2)
     {
         fprintf(stderr, "Usage: %s <filename>\n", argv[0]);
-        printf("This utility is designed to split a large MySQL Dump file into smaller files based on the presence of the phrase 'Table structure for table'.\n");
-        printf("Each time this phrase is found, a new file is created starting from that point, allowing for easier management of large SQL files.\n");
+        fprintf(stderr, "Splits a large MySQL dump file into smaller files at table boundaries.\n");
+        fprintf(stderr, "Each output file contains one table's structure and data.\n");
         return EXIT_FAILURE;
     }
 
-    FILE *file = fopen(argv[1], "rb");
-    if (file == NULL)
+    FILE *input = fopen(argv[1], "r");
+    if (input == NULL)
     {
         perror("Error opening file");
         return EXIT_FAILURE;
     }
 
-    char buffer[BUFFER_LENGTH];
-    size_t bytes_read;
-    int split_file_number = 0;
-    FILE *split_file = NULL;
-    char search_buffer[SEARCH_STRING_LENGTH * 2] = {0}; // Buffer to hold potential matches across reads
-
-    while ((bytes_read = fread(buffer, 1, sizeof(buffer), file)) > 0)
+    char *line = malloc(LINE_BUFFER_SIZE);
+    if (line == NULL)
     {
-        // Prepend any leftover from the previous read
-        memmove(search_buffer + SEARCH_STRING_LENGTH, buffer, SEARCH_STRING_LENGTH);
+        perror("Error allocating line buffer");
+        fclose(input);
+        return EXIT_FAILURE;
+    }
 
-        for (size_t i = 0; i < bytes_read; i++)
+    int split_number = 0;
+    FILE *output = NULL;
+
+    while (fgets(line, LINE_BUFFER_SIZE, input) != NULL)
+    {
+        /* Start a new output file when a table structure marker is found.
+           Using strncmp ensures we only match at the start of a line,
+           avoiding false positives from data containing the marker text. */
+        if (strncmp(line, SEARCH_STRING, SEARCH_STRING_LENGTH) == 0)
         {
-            // Shift the search buffer
-            memmove(search_buffer, search_buffer + 1, SEARCH_STRING_LENGTH * 2 - 1);
-            search_buffer[SEARCH_STRING_LENGTH * 2 - 1] = buffer[i];
-
-            if (memcmp(search_buffer + SEARCH_STRING_LENGTH, SEARCH_STRING, SEARCH_STRING_LENGTH) == 0)
+            finish_sql_file(output);
+            output = start_new_sql_file(argv[1], split_number++);
+            if (output == NULL)
             {
-                if (split_file != NULL)
-                {
-                    fwrite(buffer, 1, i, split_file);
-                    finish_sql_file(split_file);
-                }
-
-                char split_file_name[255];
-                snprintf(split_file_name, sizeof(split_file_name), "%s_%02d.sql", argv[1], split_file_number++);
-
-                split_file = start_new_sql_file(split_file_name, split_file_number);
-                if (split_file == NULL)
-                {
-                    perror("Error creating split file");
-                    fclose(file);
-                    return EXIT_FAILURE;
-                }
-
-                // Write the SEARCH_STRING to the new file
-                fwrite(SEARCH_STRING, 1, SEARCH_STRING_LENGTH, split_file);
+                fclose(input);
+                free(line);
+                return EXIT_FAILURE;
             }
         }
 
-        if (split_file != NULL)
+        /* Create an initial output file for preamble content (server
+           settings, character sets, etc.) that appears before the first
+           table marker. This prevents silent data loss. */
+        if (output == NULL)
         {
-            fwrite(buffer, 1, bytes_read, split_file);
+            output = start_new_sql_file(argv[1], split_number++);
+            if (output == NULL)
+            {
+                fclose(input);
+                free(line);
+                return EXIT_FAILURE;
+            }
         }
+
+        fputs(line, output);
     }
 
-    if (split_file != NULL)
+    if (ferror(input))
     {
-        finish_sql_file(split_file);
+        perror("Error reading input file");
+        finish_sql_file(output);
+        fclose(input);
+        free(line);
+        return EXIT_FAILURE;
     }
-    fclose(file);
+
+    finish_sql_file(output);
+    fclose(input);
+    free(line);
     return EXIT_SUCCESS;
 }
