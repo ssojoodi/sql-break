@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Parallel load of a MySQL dump file into a database
+# Example: parallel_load.sh ~/dumps/dump.sql mydb -j 4 -h localhost -u root -p password
 set -euo pipefail
 
 usage() { echo "Usage: $0 <dumpfile> <db> [-j N] [-h host] [-u user] [-p pass]" >&2; exit 1; }
