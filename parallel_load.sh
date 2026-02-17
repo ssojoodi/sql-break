@@ -6,7 +6,7 @@ usage() { echo "Usage: $0 <dumpfile> <db> [-j N] [-h host] [-u user] [-p pass]" 
 [[ $# -lt 2 ]] && usage
 
 DUMPFILE="$1"; DB="$2"; shift 2
-JOBS=4 HOST=localhost USER=root PASS=""
+JOBS=4 HOST=localhost USER=root PASS="" BREAKSQL="./build/breaksql"
 
 while getopts "j:h:u:p:" opt; do
   case $opt in
@@ -23,8 +23,10 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 # Split dump into chunks inside temp dir
 cp "$DUMPFILE" "$TMPDIR/dump.sql"
-(cd "$TMPDIR" && breaksql dump.sql)
+cp "$BREAKSQL" "$TMPDIR/breaksql"
+(cd "$TMPDIR" && ./breaksql dump.sql > /dev/null)
 rm "$TMPDIR/dump.sql"
+rm "$TMPDIR/breaksql"
 
 MYSQL_OPTS="-h $HOST -u $USER ${PASS:+-p$PASS} $DB"
 
